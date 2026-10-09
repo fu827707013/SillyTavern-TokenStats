@@ -1,0 +1,12 @@
+{
+    "display_name": "Token 用量统计",
+    "loading_order": 110,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "本地自建",
+    "version": "1.0.0",
+    "homePage": "",
+    "hooks": {}
+}

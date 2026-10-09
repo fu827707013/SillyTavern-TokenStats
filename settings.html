@@ -1,0 +1,38 @@
+<div class="token-stats-settings">
+    <div class="inline-drawer">
+        <div class="inline-drawer-toggle inline-drawer-header">
+            <b>Token 用量统计</b>
+            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+        </div>
+        <div class="inline-drawer-content">
+
+            <div class="ts-toolbar">
+                <label class="checkbox_label" title="关掉后停止记录新调用，已有历史数据保留">
+                    <input type="checkbox" id="ts-enabled">
+                    <span>启用统计</span>
+                </label>
+                <button class="menu_button" id="ts-clear" title="清空全部历史记录">
+                    <i class="fa-solid fa-trash-can"></i> 清空
+                </button>
+            </div>
+
+            <div class="ts-ranges">
+                <button class="menu_button ts-range-btn ts-active" data-range="today">今日</button>
+                <button class="menu_button ts-range-btn" data-range="d7">近 7 天</button>
+                <button class="menu_button ts-range-btn" data-range="d30">近 30 天</button>
+                <button class="menu_button ts-range-btn" data-range="all">全部</button>
+            </div>
+
+            <div class="ts-status" id="ts-status">加载中…</div>
+
+            <div id="token-stats-body">
+                <div class="ts-empty">加载中…</div>
+            </div>
+
+            <small class="ts-note">
+                数据来自上游返回的真实 usage（非本地估算）。ST 本身解析了这些字段但从未使用，
+                本扩展在请求响应流上旁路读取后记录。记录只存在于本机设置文件。
+            </small>
+        </div>
+    </div>
+</div>
