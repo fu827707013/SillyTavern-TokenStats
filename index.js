@@ -405,9 +405,35 @@ function renderPanel() {
 
 // ─────────────────────────── UI ───────────────────────────
 
+/**
+ * 动态推导本扩展在酒馆里的扩展名。
+ *
+ * 为什么不能写死：从 GitHub 安装时，酒馆用【仓库名】当文件夹名
+ * （src/endpoints/extensions.js:122），所以本地文件夹可能是
+ * SillyTavern-TokenStats，而不是手工复制时的 token-stats。
+ * 写死会导致 renderExtensionTemplateAsync 找不到 settings.html，
+ * 面板静默不显示 —— 插件看着"加载了"却没有界面。
+ *
+ * 做法：从本模块的 URL 反推，兼容任意文件夹名。
+ *   /scripts/extensions/third-party/<文件夹>/index.js
+ *   → third-party/<文件夹>
+ */
+function resolveExtensionName() {
+    try {
+        const url = new URL(import.meta.url);
+        const m = url.pathname.match(/\/scripts\/extensions\/(.+?)\/[^/]+\.js$/);
+        if (m && m[1]) return m[1];
+    } catch {
+        /* 忽略，走兜底 */
+    }
+    return 'third-party/token-stats';   // 兜底：手工复制时的默认名
+}
+
+const EXTENSION_NAME = resolveExtensionName();
+
 async function addExtensionUI() {
     try {
-        const html = await renderExtensionTemplateAsync('third-party/token-stats', 'settings');
+        const html = await renderExtensionTemplateAsync(EXTENSION_NAME, 'settings');
         const mount = document.getElementById('extensions_settings2') || document.getElementById('extensions_settings');
         if (!mount) {
             console.warn('[token-stats] 找不到设置容器');
