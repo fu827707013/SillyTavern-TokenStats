@@ -3,34 +3,45 @@
 
 /* ─────────────── 聊天框上方的实时统计条 ───────────────
    参考 DSH 的 ContextMeter：环形进度 + 百分比，点击展开明细。
-   整体克制：小字号、低对比，不抢聊天内容注意力。 */
+
+   ★ 背景必须自己画：统计条所在的 #form_sheld 是透明的，
+     深色底只画在 #send_form 上。如果这里不铺底，
+     文字会直接压在聊天区背景图/亮色区域上，在浅色主题或亮背景图下完全看不清。 */
 #ts-composer-bar {
     display: flex;
     justify-content: center;
     position: relative;
-    padding: 2px 8px 4px;
+    padding: 3px 8px;
+    /* 与输入框同一块底：视觉上连成一体，又能保证任何主题下都可读 */
+    background-color: var(--SmartThemeBlurTintColor, rgba(29, 33, 40, 0.9));
+    border-top: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, 0.2));
 }
 
 #ts-composer-bar .ts-bar-trigger {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 2px 10px;
+    padding: 3px 12px;
     border: none;
     border-radius: 999px;
     background: transparent;
+    /* 不再压 opacity —— 那会让文字与背景混在一起；
+       改为直接用主题前景色，悬停时再加深背景做出反馈 */
     color: var(--SmartThemeBodyColor, #ccc);
-    opacity: 0.65;
     font-family: inherit;
-    font-size: 0.78em;
+    /* 0.8em 实测 12px，相对酒馆正文 15px 偏小；
+       0.87em ≈ 13px —— 既比正文克制，又不至于看不清 */
+    font-size: 0.87em;
     font-variant-numeric: tabular-nums;
     line-height: 1.6;
     white-space: nowrap;
     cursor: pointer;
-    transition: opacity 0.15s ease, background-color 0.15s ease;
+    transition: background-color 0.15s ease, color 0.15s ease;
     /* 窄窗口时宁可裁掉尾部，也不要撑破发送区布局 */
     max-width: 100%;
     overflow: hidden;
+    /* 背景图很花时也能保证文字边缘清晰 */
+    text-shadow: 0 1px 2px var(--SmartThemeShadowColor, rgba(0, 0, 0, 0.7));
 }
 
 /* 响应式优先级：窗口越窄，越靠后的信息先收起（p6 最先隐藏，p3 最后）。
@@ -53,15 +64,15 @@
 
 #ts-composer-bar .ts-bar-trigger:hover,
 #ts-composer-bar .ts-bar-trigger[aria-expanded="true"] {
-    opacity: 1;
-    background-color: var(--white20a, rgba(255,255,255,0.08));
+    background-color: var(--white30a, rgba(255, 255, 255, 0.14));
 }
 
+/* 环形轨道：用当前文字色但压低透明度画环，不用元素 opacity */
 #ts-composer-bar .ts-ring-track {
     fill: none;
     stroke: currentColor;
     stroke-width: 2;
-    opacity: 0.28;
+    stroke-opacity: 0.3;
 }
 
 #ts-composer-bar .ts-ring-fill {
@@ -73,12 +84,16 @@
 }
 
 #ts-composer-bar .ts-bar-pct {
-    font-weight: 600;
+    font-weight: 700;
+    /* 百分比是核心信息：用主题强调色 + 加粗，在任何背景上都跳出来 */
     color: var(--SmartThemeQuoteColor, #4a7dab);
+    text-shadow: 0 1px 2px var(--SmartThemeShadowColor, rgba(0, 0, 0, 0.7));
 }
 
+/* 分隔点：只压低它自己的颜色，不要用 opacity 影响整行可读性 */
 #ts-composer-bar .ts-bar-sep {
-    opacity: 0.35;
+    color: var(--SmartThemeBodyColor, #ccc);
+    opacity: 0.4;
 }
 
 #ts-composer-bar .ts-bar-cache {
@@ -134,7 +149,9 @@
 }
 
 #ts-composer-bar .ts-bar-panel-row > span:first-child {
-    opacity: 0.65;
+    /* 用文字色 + 降透明度，而不是元素 opacity —— 后者会让整行一起变淡 */
+    color: var(--SmartThemeBodyColor, #ddd);
+    opacity: 0.72;
 }
 
 #ts-composer-bar .ts-bar-panel-row > span:last-child {
@@ -143,36 +160,42 @@
 }
 
 /* ─────────────────── 角色列表用量徽章 ───────────────────
-   名字区空间极紧（366px 里名字占 339px），所以徽章必须做小：
-   小字号 + 不换行 + 允许被压缩省略，绝不撑破列表布局。 */
+   名字区空间有限（366px 里名字占 279px），徽章必须克制：
+   小字号 + 不换行 + 空间不够时优先压缩自己，绝不撑破列表布局。
+
+   ★ 这里刻意「不靠降低透明度来弱化」：
+     ① 元素级 opacity 会连文字一起变淡，在卡片背景上更难读；
+     ② 徽章是 <small> 标签，会被酒馆自己的 `small { opacity: 0.7 }` 命中，
+        所以必须显式写 opacity: 1 覆盖掉，否则白拿一层 30% 的淡化。
+     弱化改用「主题强调色 + 实底背景」的组合，既低调又清晰。 */
 .ts-char-badge {
     flex-shrink: 999;            /* 空间不够时优先压缩徽章，不动角色名 */
     min-width: 0;
-    margin-left: 2px;            /* 紧贴角色名 */
-    padding: 0 4px;
+    margin-left: 4px;            /* 紧贴角色名但留一点呼吸 */
+    padding: 1px 5px;
     border-radius: 3px;
-    font-size: 0.62em;
-    font-weight: 500;
-    line-height: 1.5;
+    /* 0.62em 实测只有 9.3px，太小；0.72em ≈ 10.8px 是列表里可读的下限 */
+    font-size: 0.72em;
+    font-weight: 600;
+    line-height: 1.45;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    opacity: 0.75;
+    opacity: 1;                  /* 覆盖酒馆全局 small{opacity:.7} */
     color: var(--SmartThemeQuoteColor, #4a7dab);
-    background-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #4a7dab) 14%, transparent);
-    border: 1px solid color-mix(in srgb, var(--SmartThemeQuoteColor, #4a7dab) 30%, transparent);
+    background-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #4a7dab) 18%, var(--SmartThemeBlurTintColor, #1a1a1a));
+    border: 1px solid color-mix(in srgb, var(--SmartThemeQuoteColor, #4a7dab) 35%, transparent);
     cursor: help;
     align-self: center;          /* 名字按 baseline 对齐，徽章居中更好看 */
 }
 
-/* 悬停时高亮，提示它是可交互信息 */
+/* 悬停时把背景做实一点，做出可交互的反馈（而不是靠透明度变化） */
 .ts-char-badge:hover {
-    opacity: 1;
+    background-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #4a7dab) 30%, var(--SmartThemeBlurTintColor, #1a1a1a));
 }
 
-/* 悬浮放大：名字被截断时也能看全用量 */
+/* 悬浮整行时，徽章不再让位，完整显示 */
 .character_select:hover .ts-char-badge {
-    opacity: 1;
     flex-shrink: 0;
 }
 
@@ -206,12 +229,12 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: 0.92em;
-    opacity: 0.6;
+    opacity: 0.75;
 }
 
 /* 无上下文数据时的占位（当前聊天还没产生过调用） */
 #ts-composer-bar .ts-bar-idle {
-    opacity: 0.55;
+    opacity: 0.75;
 }
 
 /* 范围切换单独占一行，按钮等宽铺满，避免被挤压换行 */
@@ -309,7 +332,8 @@
 
 .token-stats-settings .ts-tile-sub {
     font-size: 0.72em;
-    opacity: 0.5;
+    /* 0.5 实测对比度仅 3.59:1（低于 WCAG AA 的 4.5）—— 提到 0.72 后约 5.8:1 */
+    opacity: 0.72;
     margin-top: 1px;
     white-space: nowrap;
     overflow: hidden;
@@ -344,10 +368,11 @@
 .token-stats-settings .ts-toggle-meta {
     font-weight: 400;
     font-size: 0.9em;
-    opacity: 0.5;
+    opacity: 0.72;
     margin-left: auto;
 }
 
+/* 图标是装饰，不是文字，压低不影响到可读性 */
 .token-stats-settings .ts-toggle-icon {
     font-size: 0.8em;
     opacity: 0.6;
@@ -398,7 +423,7 @@
 
 .token-stats-settings .ts-bar-calls {
     font-weight: 400;
-    opacity: 0.55;
+    opacity: 0.72;
     font-size: 0.9em;
 }
 
@@ -418,7 +443,7 @@
 
 .token-stats-settings .ts-bar-sub {
     font-size: 0.74em;
-    opacity: 0.55;
+    opacity: 0.72;
     margin-top: 2px;
 }
 
@@ -437,7 +462,7 @@
 
 .token-stats-settings .ts-hint-inline {
     font-weight: 400;
-    opacity: 0.5;
+    opacity: 0.72;
     font-size: 0.9em;
 }
 
@@ -466,7 +491,7 @@
 }
 
 .token-stats-settings .ts-table .ts-dim {
-    opacity: 0.6;
+    opacity: 0.75;
     white-space: nowrap;
 }
 
@@ -476,14 +501,14 @@
 
 .token-stats-settings .ts-empty {
     text-align: center;
-    opacity: 0.6;
+    opacity: 0.78;
     padding: 18px 8px;
     font-size: 0.9em;
 }
 
 .token-stats-settings .ts-note {
     display: block;
-    opacity: 0.55;
+    opacity: 0.72;
     font-size: 0.78em;
     line-height: 1.5;
     margin-top: 6px;
