@@ -28,6 +28,27 @@
     white-space: nowrap;
     cursor: pointer;
     transition: opacity 0.15s ease, background-color 0.15s ease;
+    /* 窄窗口时宁可裁掉尾部，也不要撑破发送区布局 */
+    max-width: 100%;
+    overflow: hidden;
+}
+
+/* 响应式优先级：窗口越窄，越靠后的信息先收起（p6 最先隐藏，p3 最后）。
+   用显式类名而不是 nth-of-type —— 后者依赖元素顺序，改动一处就会错位。 */
+@media (max-width: 1100px) {
+    #ts-composer-bar .ts-bar-p6 { display: none; }
+}
+
+@media (max-width: 950px) {
+    #ts-composer-bar .ts-bar-p5 { display: none; }
+}
+
+@media (max-width: 800px) {
+    #ts-composer-bar .ts-bar-p4 { display: none; }
+}
+
+@media (max-width: 620px) {
+    #ts-composer-bar .ts-bar-p3 { display: none; }
 }
 
 #ts-composer-bar .ts-bar-trigger:hover,
@@ -175,6 +196,22 @@
     min-width: 84px;
     padding: 2px 6px;
     font-size: 0.95em;
+}
+
+/* 当前会话名（帮助用户确认「只看当前角色」作用于谁） */
+.token-stats-settings .ts-current-name {
+    margin-left: auto;
+    max-width: 45%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.92em;
+    opacity: 0.6;
+}
+
+/* 无上下文数据时的占位（当前聊天还没产生过调用） */
+#ts-composer-bar .ts-bar-idle {
+    opacity: 0.55;
 }
 
 /* 范围切换单独占一行，按钮等宽铺满，避免被挤压换行 */

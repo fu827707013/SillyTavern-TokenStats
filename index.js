@@ -34,7 +34,9 @@ const defaultSettings = {
     showCharBadge: true,  // 在右侧角色列表给每个角色显示用量徽章
     badgeRange: 'all',    // 角色徽章统计哪个范围
     showComposerBar: true, // 聊天框下方显示实时统计条
-    records: [],          // { t, model, source, prompt, completion, total, cacheRead, cacheWrite, reasoning, chat }
+    onlyCurrent: false,   // 面板只统计当前角色（多角色剧本时聚焦单人开销）
+    missedCalls: 0,       // 上游没返回 usage 的次数（用于提示"统计不到"而非"没工作"）
+    records: [],          // { t, model, source, chat, session, prompt, completion, total, cacheRead, cacheWrite, reasoning }
 };
 
 function getSettings() {
@@ -179,9 +181,31 @@ async function captureUsage(response, init, chatLabelAtStart) {
         // 用请求发出时抓到的角色名，不能用读完流之后的 ——
         // 读流是异步的，群聊里这一刻可能已经轮到下一个角色说话了
         chat: chatLabelAtStart || getChatLabel(),
+        // 会话标识：用于把「本次上下文占用」精确定位到当前聊天。
+        // 群聊里 name2 会随发言者变化，单靠角色名无法判断是不是同一个聊天。
+        session: sessionKey(),
         ...usage,
     };
     pushRecord(rec);
+}
+
+/**
+ * 当前会话的唯一标识。
+ *
+ * 不能用 name2 —— 群聊里它跟着发言者变。
+ * 用 avatar（单人）/ group id（群聊）才是稳定的「这是哪个聊天」。
+ */
+function sessionKey() {
+    try {
+        const ctx = getContext();
+        if (ctx?.groupId) return `group:${ctx.groupId}`;
+        const chid = ctx?.this_chid;
+        const ch = chid !== undefined && chid !== null ? ctx?.characters?.[chid] : null;
+        if (ch?.avatar) return `char:${ch.avatar}`;
+        return ctx?.name2 ? `name:${ctx.name2}` : '';
+    } catch {
+        return '';
+    }
 }
 
 /** 当前会话标签，便于按角色/会话区分 */
@@ -457,10 +481,42 @@ const COMPOSER_BAR_ID = 'ts-composer-bar';
 const RING_RADIUS = 5.5;
 const RING_CIRC = 2 * Math.PI * RING_RADIUS;
 
-/** 最近一次调用的 prompt_tokens（= 本回合实际占用上下文） */
+/**
+ * 本回合实际占用的上下文 tokens。
+ *
+ * 关键：必须取「当前会话」的那条记录，不能用全局最后一条 ——
+ * 否则切到一个从没聊过的角色时，会显示上一个聊天的读数，
+ * 用户会误以为这个角色已经占了那么多上下文。
+ *
+ * 匹配优先用 session（avatar / group id，群聊里也稳定）；
+ * 老记录没有 session 字段，退回按角色名匹配。
+ *
+ * 当前会话没有记录时返回 null，由调用方显示「—」而不是伪造成 0。
+ */
 function latestPromptTokens() {
     const recs = getSettings().records;
-    return recs.length ? num(recs[recs.length - 1].prompt) : 0;
+    if (!recs.length) return null;
+    const key = sessionKey();
+    const me = currentChatLabel();
+    for (let i = recs.length - 1; i >= 0; i--) {
+        const r = recs[i];
+        if (key && r.session) {
+            if (r.session === key) return num(r.prompt);
+            continue;                       // 有 session 但不是本会话，跳过
+        }
+        // 兼容旧记录：按角色名匹配（用发起时抓的名字）
+        if (me && r.chat === me) return num(r.prompt);
+    }
+    return null;   // 当前会话还没产生过记录
+}
+
+/** 当前聊天标签；拿不到返回 '' */
+function currentChatLabel() {
+    try {
+        return getContext()?.name2 || '';
+    } catch {
+        return '';
+    }
 }
 
 /** 取上下文窗口大小；拿不到就返回 0（不显示百分比） */
@@ -474,33 +530,41 @@ function contextWindowSize() {
 }
 
 function composerBarHTML() {
-    const used = latestPromptTokens();
+    const used = latestPromptTokens();          // null = 当前聊天还没记录
     const max = contextWindowSize();
     const s = getSettings();
     const today = sumRecords(filterByRange(s.records, 'today'));
     const total = sumRecords(s.records);
-    const rate = cacheHitRate(sumRecords(s.records));
-    const pct = max > 0 ? Math.min(100, used / max * 100) : 0;
+    const rate = cacheHitRate(total);
+    const hasCtx = used !== null && max > 0;
+    const pct = hasCtx ? Math.min(100, used / max * 100) : 0;
     const dash = RING_CIRC * pct / 100;
 
+    // 当前聊天没有记录时，不要把上一个聊天的读数伪装成本次占用
+    const ctxText = used === null
+        ? `<span class="ts-bar-item ts-bar-p3 ts-bar-idle" title="这个聊天还没有产生过调用">上下文 —</span>`
+        : `<span class="ts-bar-item ts-bar-p3" title="本次请求实际占用的上下文 tokens">上下文 ${shortNum(used)} / ${max ? shortNum(max) : '—'}</span>`;
+
+    // 响应式优先级：窗口变窄时按 p5→p4→p3 依次收起，
+    // 用显式类名而不是 nth-of-type —— 后者依赖元素顺序，改一处就错位。
     return `
         <button type="button" class="ts-bar-trigger" id="ts-bar-trigger"
-                aria-label="上下文已用 ${Math.round(pct)}%" aria-expanded="false" title="点击查看用量明细">
+                aria-label="${hasCtx ? `上下文已用 ${Math.round(pct)}%` : '上下文用量未知'}" aria-expanded="false" title="点击查看用量明细">
             <svg viewBox="0 0 14 14" width="13" height="13" aria-hidden="true">
                 <circle class="ts-ring-track" cx="7" cy="7" r="${RING_RADIUS}"></circle>
                 <circle class="ts-ring-fill" cx="7" cy="7" r="${RING_RADIUS}"
                         stroke-dasharray="${dash.toFixed(2)} ${RING_CIRC.toFixed(2)}"
                         transform="rotate(-90 7 7)"></circle>
             </svg>
-            <span class="ts-bar-pct">${max > 0 ? Math.round(pct) + '%' : '—'}</span>
-            <span class="ts-bar-sep">·</span>
-            <span class="ts-bar-item" title="本次请求实际占用的上下文 tokens">上下文 ${shortNum(used)} / ${shortNum(max)}</span>
-            <span class="ts-bar-sep">·</span>
-            <span class="ts-bar-item" title="今日累计消耗">今日 ${shortNum(today.total)}</span>
-            <span class="ts-bar-sep">·</span>
-            <span class="ts-bar-item" title="全部历史累计消耗">累计 ${shortNum(total.total)}</span>
-            ${rate !== null ? `<span class="ts-bar-sep">·</span>
-            <span class="ts-bar-item ts-bar-cache" title="缓存命中率（命中 / 输入）">缓存 ${rate.toFixed(0)}%</span>` : ''}
+            <span class="ts-bar-pct">${hasCtx ? Math.round(pct) + '%' : '—'}</span>
+            <span class="ts-bar-sep ts-bar-p3">·</span>
+            ${ctxText}
+            <span class="ts-bar-sep ts-bar-p4">·</span>
+            <span class="ts-bar-item ts-bar-p4" title="今日累计消耗">今日 ${shortNum(today.total)}</span>
+            <span class="ts-bar-sep ts-bar-p5">·</span>
+            <span class="ts-bar-item ts-bar-p5" title="全部历史累计消耗">累计 ${shortNum(total.total)}</span>
+            ${rate !== null ? `<span class="ts-bar-sep ts-bar-p6">·</span>
+            <span class="ts-bar-item ts-bar-p6 ts-bar-cache" title="缓存命中率（命中 / 输入，全部历史）">缓存 ${rate.toFixed(0)}%</span>` : ''}
         </button>
         <div class="ts-bar-panel" id="ts-bar-panel" role="dialog" aria-label="Token 用量" hidden>
             <div class="ts-bar-panel-head">
@@ -508,9 +572,10 @@ function composerBarHTML() {
                 <span class="ts-bar-panel-total">${fmtFull(total.total)} tok</span>
             </div>
             <div class="ts-bar-panel-rows">
-                <div class="ts-bar-panel-row"><span>上下文已用</span><span>${max > 0 ? Math.round(pct) + '%' : '未知'}（${fmtFull(used)} / ${max ? fmtFull(max) : '—'}）</span></div>
+                <div class="ts-bar-panel-row"><span>当前聊天</span><span>${esc(currentChatLabel() || '—')}${used !== null ? ` · ${fmtFull(used)} tok` : ' · 无记录'}</span></div>
+                <div class="ts-bar-panel-row"><span>上下文已用</span><span>${hasCtx ? Math.round(pct) + '%（' + fmtFull(used) + ' / ' + fmtFull(max) + '）' : '—'}</span></div>
                 <div class="ts-bar-panel-row"><span>缓存命中</span><span>${rate !== null ? rate.toFixed(1) + '%' : '—'}</span></div>
-                <div class="ts-bar-panel-row"><span>未缓存输入</span><span>${fmtFull(sumRecords(s.records).cacheMiss)} tok</span></div>
+                <div class="ts-bar-panel-row"><span>未缓存输入</span><span>${fmtFull(total.cacheMiss)} tok</span></div>
                 <div class="ts-bar-panel-row"><span>缓存读取</span><span>${fmtFull(total.cacheRead)} tok</span></div>
                 <div class="ts-bar-panel-row"><span>今日用量</span><span>${fmtFull(today.total)} tok · ${today.calls} 次</span></div>
                 <div class="ts-bar-panel-row"><span>累计输出</span><span>${fmtFull(total.completion)} tok</span></div>
@@ -627,7 +692,11 @@ function installComposerBar() {
     const evs = ['CHAT_CHANGED', 'MESSAGE_SENT', 'MESSAGE_RECEIVED', 'GENERATION_ENDED', 'GENERATION_STOPPED'];
     for (const name of evs) {
         const evt = event_types?.[name];
-        if (evt) eventSource.on(evt, () => setTimeout(refreshComposerBar, 150));
+        if (evt) eventSource.on(evt, () => setTimeout(() => {
+            refreshComposerBar();
+            updateStatus();        // 同步「当前：xx」，切角色后面板里也要跟着变
+            if (getSettings().onlyCurrent) renderPanel();
+        }, 150));
     }
 }
 
@@ -651,20 +720,39 @@ function barRow(item, maxTotal, sub) {
     </div>`;
 }
 
+/** 按范围 + 当前角色过滤记录 */
+function scopedRecords(range, onlyCurrent) {
+    let rows = filterByRange(getSettings().records, range);
+    if (!onlyCurrent) return rows;
+    const key = sessionKey();
+    const me = currentChatLabel();
+    // 群聊里同一次会话下会有多个角色发言，按会话归并；
+    // 单人聊天没有 session 的老记录退回按角色名匹配
+    return rows.filter(r => (key && r.session) ? r.session === key : (me && r.chat === me));
+}
+
 function renderPanel() {
     const root = document.getElementById('token-stats-body');
     if (!root) return;
 
     const s = getSettings();
-    const scoped = filterByRange(s.records, currentRange);
+    const scoped = scopedRecords(currentRange, s.onlyCurrent);
     const sum = sumRecords(scoped);
 
     if (!scoped.length) {
-        root.innerHTML = `<div class="ts-empty">
-            ${s.records.length
-                ? '该时间段内没有记录，换个范围看看。'
-                : '还没有数据。发一条消息后即可看到真实用量。'}
-        </div>`;
+        // 空状态要说清「为什么空」，并给一条出路 —— 否则用户会以为插件坏了
+        const total = s.records.length;
+        const newest = total ? s.records[total - 1].t : 0;
+        let msg;
+        if (!total) {
+            msg = '还没有数据。发一条消息后即可看到真实用量。';
+        } else if (s.onlyCurrent) {
+            msg = `当前角色「${esc(currentChatLabel() || '—')}」在该时间段内没有记录。<br>换个范围，或关掉「只看当前角色」。`;
+        } else {
+            const when = newest ? new Date(newest).toLocaleString('zh-CN') : '';
+            msg = `该时间段内没有记录。最近一条在 ${esc(when)}，<br>可以点「全部」查看历史。`;
+        }
+        root.innerHTML = `<div class="ts-empty">${msg}</div>`;
         return;
     }
 
@@ -885,6 +973,17 @@ async function addExtensionUI() {
             });
         }
 
+        // 只看当前角色
+        const onlyCur = document.getElementById('ts-only-current');
+        if (onlyCur) {
+            onlyCur.checked = !!getSettings().onlyCurrent;
+            onlyCur.addEventListener('change', () => {
+                getSettings().onlyCurrent = onlyCur.checked;
+                saveSettingsDebounced();
+                renderPanel();
+            });
+        }
+
         const clr = document.getElementById('ts-clear');
         if (clr) {
             clr.addEventListener('click', async () => {
@@ -920,7 +1019,9 @@ async function addExtensionUI() {
 /** 导出为 CSV，方便自己用 Excel 对账 */
 function exportCsv() {
     const s = getSettings();
-    const rows = filterByRange(s.records, currentRange);
+    // 导出跟随面板的过滤条件（选了「只看当前角色」就只导这个角色），
+    // 否则用户看到的和导出的对不上
+    const rows = scopedRecords(currentRange, s.onlyCurrent);
     if (!rows.length) {
         toastr.info('当前范围没有可导出的记录', 'Token 用量统计');
         return;
@@ -940,11 +1041,20 @@ function exportCsv() {
     a.download = `token-usage-${currentRange}-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    toastr.success(`已导出 ${rows.length} 条记录`, 'Token 用量统计');
+    toastr.success(`已导出 ${rows.length} 条记录${s.onlyCurrent ? '（仅当前角色）' : ''}`, 'Token 用量统计');
+}
+
+/** 刷新设置面板里「当前：xx」的显示 */
+function updateCurrentNameLabel() {
+    const nameEl = document.getElementById('ts-current-name');
+    if (!nameEl) return;
+    const label = currentChatLabel();
+    nameEl.textContent = label ? `当前：${label}` : '';
 }
 
 function updateStatus() {
     const el = document.getElementById('ts-status');
+    updateCurrentNameLabel();
     if (!el) return;
     const s = getSettings();
     const sum = sumRecords(filterByRange(s.records, 'today'));
@@ -955,6 +1065,9 @@ function updateStatus() {
     }
 
     let text = `记录中 · 今日 ${fmt(sum.total)} tokens · ${sum.calls} 次调用 · 累计 ${s.records.length} 条`;
+    if (s.onlyCurrent) {
+        text += ' · 面板仅统计当前角色';
+    }
 
     // 上游没返回 usage 时提示，避免用户误以为插件坏了
     const missed = num(s.missedCalls);
