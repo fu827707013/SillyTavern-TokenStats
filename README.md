@@ -52,7 +52,7 @@
 1. 打开酒馆 → 顶部**积木图标（扩展程序）**
 2. 在「Install extension」输入框粘贴本仓库地址：
    ```
-   https://github.com/<你的用户名>/SillyTavern-TokenStats
+   https://github.com/fu827707013/SillyTavern-TokenStats
    ```
 3. 点 **Install**，确认第三方扩展警告
 4. 刷新页面（F5）
