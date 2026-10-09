@@ -602,25 +602,66 @@ function refreshComposerBar() {
         const wrap = document.createElement('div');
         wrap.id = COMPOSER_BAR_ID;
         wrap.innerHTML = composerBarHTML();
-        holder.insertBefore(wrap, holder.firstChild);
+        mountComposerBar(wrap, holder);
         bindComposerBar();
         return;
     }
-    // 原地更新，避免整块重建导致面板被关闭、动画重放
+
+    // 顺序可能被其它扩展改动（ST 会重排 form_sheld），这里纠正到末尾
+    if (holder.lastElementChild !== existing) {
+        holder.appendChild(existing);
+    }
+
+    // 原地更新，避免整块重建导致面板被关闭
     existing.innerHTML = composerBarHTML();
     bindComposerBar();
 }
 
 /**
+ * 把统计条插到输入框「下方」（DSH 的布局）。
+ *
+ * form_sheld 的子元素顺序是 [dialogue_del_mes, send_form, img_form]，
+ * 其中前后两个平时高度为 0。直接 append 到末尾即可落在输入框下方；
+ * 附件预览栏（img_form）显示时统计条会顺延到它下面，同样合理。
+ */
+function mountComposerBar(wrap, holder) {
+    holder.appendChild(wrap);
+}
+
+/**
  * 绑定统计条交互。
  *
- * 这里用「事件委托」绑在容器上，而不是绑在按钮上 —— 因为刷新时是
- * `wrap.innerHTML = ...` 重建内部节点，直接绑按钮的话每次重绘都要重绑，
- * 一旦漏绑按钮就失灵。容器本身是持久的，绑一次就够。
+ * 交互模型（对齐 DSH：鼠标移上去就出，不用点）：
+ *   · 鼠标移入统计条 → 展开明细
+ *   · 鼠标移出（且没被「钉住」）→ 收起
+ *   · 点击 → 钉住/取消钉住（方便想让它常驻或复制数字时用）
+ *   · Esc / 点面板外 → 收起并取消钉住
  *
- * 另外 document 级监听器也只注册一次，避免重绘时不断堆积。
+ * 用「事件委托」绑在容器上：刷新时是 `wrap.innerHTML = ...` 重建内部节点，
+ * 直接绑按钮的话每次重绘都要重绑，漏一次按钮就失灵。容器是持久的，绑一次就够。
+ * document 级监听器也只注册一次，避免重绘时不断堆积。
  */
 let composerDocBound = false;
+
+/** 悬停时是否被点击钉住（钉住后移出鼠标也不收起） */
+let composerPinned = false;
+/** 移出后的延迟收起定时器 —— 用来跨越统计条与面板之间那几像素的空隙 */
+let composerCloseTimer = null;
+
+function setPanelOpen(w, open) {
+    const p = w?.querySelector('#ts-bar-panel');
+    const t = w?.querySelector('#ts-bar-trigger');
+    if (!p) return;
+    p.hidden = !open;
+    t?.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+function cancelComposerClose() {
+    if (composerCloseTimer) {
+        clearTimeout(composerCloseTimer);
+        composerCloseTimer = null;
+    }
+}
 
 function bindComposerDocListeners() {
     if (composerDocBound) return;
@@ -629,22 +670,20 @@ function bindComposerDocListeners() {
     document.addEventListener('click', (e) => {
         const w = document.getElementById(COMPOSER_BAR_ID);
         if (!w) return;
-        const p = w.querySelector('#ts-bar-panel');
-        if (!p || p.hidden) return;
+        // 点面板外部 → 收起并取消钉住（点面板内部保持打开，方便选中数字）
         if (!w.contains(e.target)) {
-            p.hidden = true;
-            w.querySelector('#ts-bar-trigger')?.setAttribute('aria-expanded', 'false');
+            cancelComposerClose();
+            composerPinned = false;
+            setPanelOpen(w, false);
         }
     });
 
     document.addEventListener('keydown', (e) => {
         if (e.key !== 'Escape') return;
         const w = document.getElementById(COMPOSER_BAR_ID);
-        const p = w?.querySelector('#ts-bar-panel');
-        if (p && !p.hidden) {
-            p.hidden = true;
-            w.querySelector('#ts-bar-trigger')?.setAttribute('aria-expanded', 'false');
-        }
+        cancelComposerClose();
+        composerPinned = false;
+        setPanelOpen(w, false);
     });
 }
 
@@ -656,24 +695,59 @@ function bindComposerBar() {
     bindComposerDocListeners();
 
     // 委托：容器持久，内部节点随便重建
-    wrap.addEventListener('click', (e) => {
-        const trigger = e.target.closest?.('#ts-bar-trigger');
-        if (!trigger) return;
-        e.stopPropagation();
-
+    wrap.addEventListener('mouseenter', () => {
+        cancelComposerClose();             // 又回到条上（或进了面板），取消待收起
         const w = document.getElementById(COMPOSER_BAR_ID);
         if (!w) return;
-        const wasOpen = w.querySelector('#ts-bar-panel')?.hidden === false;
 
-        // 重绘成最新数据（dataset.bound 在容器上，不受 innerHTML 影响）
-        w.innerHTML = composerBarHTML();
+        const alreadyOpen = w.querySelector('#ts-bar-panel')?.hidden === false;
+        // 只有「从关闭状态打开」时才重绘取最新数据。
+        // 面板已经开着就别重绘 —— 鼠标此刻可能正停在面板上，
+        // 重建 innerHTML 会把指针底下的节点抽走，反而触发 mouseleave 造成闪烁。
+        if (!alreadyOpen) w.innerHTML = composerBarHTML();
 
-        const p = w.querySelector('#ts-bar-panel');
-        const t2 = w.querySelector('#ts-bar-trigger');
-        if (!p || !t2) return;
-        // 再点一次就是收起
-        p.hidden = wasOpen;
-        t2.setAttribute('aria-expanded', wasOpen ? 'false' : 'true');
+        setPanelOpen(w, true);
+    });
+
+    // 面板是容器的后代节点，鼠标从统计条移到面板不会触发 mouseleave；
+    // 但两者之间有约 6px 空隙，穿过空隙时会触发 —— 所以延迟收起，
+    // 只要在延迟内进入面板，上面的 mouseenter 就会取消它。
+    wrap.addEventListener('mouseleave', () => {
+        if (composerPinned) return;
+        cancelComposerClose();
+        composerCloseTimer = setTimeout(() => {
+            composerCloseTimer = null;
+            const w = document.getElementById(COMPOSER_BAR_ID);
+            if (w && !composerPinned) setPanelOpen(w, false);
+        }, 220);
+    });
+
+    wrap.addEventListener('click', (e) => {
+        if (!e.target.closest?.('#ts-bar-trigger')) return;
+        e.stopPropagation();               // 别让 document 的「点外部关闭」立刻收掉
+        const w = document.getElementById(COMPOSER_BAR_ID);
+        if (!w) return;
+        cancelComposerClose();
+        composerPinned = !composerPinned;
+        setPanelOpen(w, composerPinned);
+    });
+
+    // 键盘可达：聚焦到触发器时也展开，和鼠标一致
+    wrap.addEventListener('focusin', (e) => {
+        if (!e.target.closest?.('#ts-bar-trigger')) return;
+        cancelComposerClose();
+        const w = document.getElementById(COMPOSER_BAR_ID);
+        setPanelOpen(w, true);
+    });
+
+    wrap.addEventListener('focusout', () => {
+        if (composerPinned) return;
+        const w = document.getElementById(COMPOSER_BAR_ID);
+        cancelComposerClose();
+        composerCloseTimer = setTimeout(() => {
+            composerCloseTimer = null;
+            if (!composerPinned) setPanelOpen(document.getElementById(COMPOSER_BAR_ID), false);
+        }, 220);
     });
 }
 

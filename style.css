@@ -1,8 +1,8 @@
 /* Token 用量统计 — 面板样式
    沿用 ST 自身的 CSS 变量，自动适配明暗主题 */
 
-/* ─────────────── 聊天框上方的实时统计条 ───────────────
-   参考 DSH 的 ContextMeter：环形进度 + 百分比，点击展开明细。
+/* ─────────────── 输入框下方的实时统计条 ───────────────
+   参考 DSH 的 ContextMeter：环形进度 + 百分比，鼠标悬浮展开明细。
 
    ★ 背景必须自己画：统计条所在的 #form_sheld 是透明的，
      深色底只画在 #send_form 上。如果这里不铺底，
@@ -14,6 +14,7 @@
     padding: 3px 8px;
     /* 与输入框同一块底：视觉上连成一体，又能保证任何主题下都可读 */
     background-color: var(--SmartThemeBlurTintColor, rgba(29, 33, 40, 0.9));
+    /* 位于输入框下方，所以分隔线画在上边 */
     border-top: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, 0.2));
 }
 
