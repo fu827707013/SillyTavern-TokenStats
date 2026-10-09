@@ -1,11 +1,60 @@
 /* Token 用量统计 — 面板样式
    沿用 ST 自身的 CSS 变量，自动适配明暗主题 */
 
+/* ─────────────────── 角色列表用量徽章 ───────────────────
+   名字区空间极紧（366px 里名字占 339px），所以徽章必须做小：
+   小字号 + 不换行 + 允许被压缩省略，绝不撑破列表布局。 */
+.ts-char-badge {
+    flex-shrink: 999;            /* 空间不够时优先压缩徽章，不动角色名 */
+    min-width: 0;
+    margin-left: 2px;            /* 紧贴角色名 */
+    padding: 0 4px;
+    border-radius: 3px;
+    font-size: 0.62em;
+    font-weight: 500;
+    line-height: 1.5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 0.75;
+    color: var(--SmartThemeQuoteColor, #4a7dab);
+    background-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #4a7dab) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--SmartThemeQuoteColor, #4a7dab) 30%, transparent);
+    cursor: help;
+    align-self: center;          /* 名字按 baseline 对齐，徽章居中更好看 */
+}
+
+/* 悬停时高亮，提示它是可交互信息 */
+.ts-char-badge:hover {
+    opacity: 1;
+}
+
+/* 悬浮放大：名字被截断时也能看全用量 */
+.character_select:hover .ts-char-badge {
+    opacity: 1;
+    flex-shrink: 0;
+}
+
 .token-stats-settings .ts-toolbar {
     display: flex;
     align-items: center;
     gap: 8px;
     margin-bottom: 8px;
+}
+
+/* 第二行工具条（角色徽章开关 + 范围选择），与主工具条视觉区分 */
+.token-stats-settings .ts-toolbar-sub {
+    padding-top: 6px;
+    border-top: 1px solid var(--SmartThemeBorderColor, rgba(128,128,128,0.2));
+    font-size: 0.92em;
+}
+
+.token-stats-settings .ts-badge-range {
+    margin-left: auto;
+    width: auto;
+    min-width: 84px;
+    padding: 2px 6px;
+    font-size: 0.95em;
 }
 
 /* 范围切换单独占一行，按钮等宽铺满，避免被挤压换行 */

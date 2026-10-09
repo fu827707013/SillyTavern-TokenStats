@@ -19,6 +19,19 @@
                 </button>
             </div>
 
+            <div class="ts-toolbar ts-toolbar-sub">
+                <label class="checkbox_label" title="在右侧角色列表的每个角色名旁显示该角色的用量徽章">
+                    <input type="checkbox" id="ts-char-badge">
+                    <span>角色列表显示用量</span>
+                </label>
+                <select id="ts-badge-range" class="text_pole ts-badge-range" title="角色徽章统计哪个时间范围">
+                    <option value="all">全部</option>
+                    <option value="today">今日</option>
+                    <option value="d7">近 7 天</option>
+                    <option value="d30">近 30 天</option>
+                </select>
+            </div>
+
             <div class="ts-ranges">
                 <button class="menu_button ts-range-btn ts-active" data-range="today">今日</button>
                 <button class="menu_button ts-range-btn" data-range="d7">近 7 天</button>

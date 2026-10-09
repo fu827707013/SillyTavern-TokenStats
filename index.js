@@ -31,6 +31,8 @@ const defaultSettings = {
     enabled: true,
     range: 'today',       // 记住上次选的时间范围
     showRecent: false,    // 「最近调用」明细默认折叠，避免把面板拉得很长
+    showCharBadge: true,  // 在右侧角色列表给每个角色显示用量徽章
+    badgeRange: 'all',    // 角色徽章统计哪个范围
     records: [],          // { t, model, source, prompt, completion, total, cacheRead, cacheWrite, reasoning, chat }
 };
 
@@ -134,7 +136,7 @@ function readRequestMeta(init) {
 }
 
 /** 后台旁路读取响应，提取 usage 并入库。不阻塞、不影响 ST */
-async function captureUsage(response, init) {
+async function captureUsage(response, init, chatLabelAtStart) {
     const s = getSettings();
     if (!s.enabled) return;
 
@@ -173,7 +175,9 @@ async function captureUsage(response, init) {
         t: Date.now(),
         model: meta.model || '(未知模型)',
         source: meta.source || '(未知渠道)',
-        chat: getChatLabel(),
+        // 用请求发出时抓到的角色名，不能用读完流之后的 ——
+        // 读流是异步的，群聊里这一刻可能已经轮到下一个角色说话了
+        chat: chatLabelAtStart || getChatLabel(),
         ...usage,
     };
     pushRecord(rec);
@@ -207,10 +211,12 @@ function installInterceptor() {
     const origFetch = window.fetch.bind(window);
     window.fetch = async function (...args) {
         const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url ?? '');
+        // 必须在发请求前抓角色名 —— 这是同步的，拿到的一定是"谁在说话"
+        const labelAtStart = String(url).includes(GENERATE_URL) ? getChatLabel() : null;
         const res = await origFetch(...args);
         if (String(url).includes(GENERATE_URL)) {
             // 必须在 ST 消费 body 之前 clone，否则拿不到流
-            void captureUsage(res, args[1]).catch(() => { /* 统计失败绝不影响聊天 */ });
+            void captureUsage(res, args[1], labelAtStart).catch(() => { /* 统计失败绝不影响聊天 */ });
         }
         return res;
     };
@@ -334,7 +340,106 @@ function scheduleRender() {
         renderTimer = null;
         renderPanel();
         updateStatus();
+        refreshCharBadges();
     }, 400);
+}
+
+// ─────────────────── 角色列表用量徽章 ───────────────────
+//
+// 在右侧角色列表的每个角色名旁边显示一个紧凑的用量徽章。
+//
+// 实现要点：
+//   · 不改酒馆源码，用 MutationObserver 监听列表重绘（翻页/搜索/换页大小都会重建 DOM）
+//   · 徽章按「角色名」匹配记录里的 chat 字段
+//   · 名字区宽度很紧（366px 里名字占 339px），所以徽章做得极小并允许被挤压隐藏
+
+const CHAR_LIST_SEL = '#rm_print_characters_block';
+const BADGE_CLS = 'ts-char-badge';
+
+/** 按角色名汇总用量 */
+function usageByCharacter(range) {
+    const map = new Map();
+    for (const r of filterByRange(getSettings().records, range)) {
+        const name = r.chat;
+        if (!name || name === '未知角色') continue;
+        if (!map.has(name)) map.set(name, { total: 0, calls: 0 });
+        const e = map.get(name);
+        e.total += num(r.total);
+        e.calls += 1;
+    }
+    return map;
+}
+
+/** 数字压缩：12345 → 12.3k */
+function shortNum(n) {
+    const v = num(n);
+    if (v < 1000) return String(v);
+    if (v < 1000000) return (v / 1000).toFixed(v < 10000 ? 1 : 0) + 'k';
+    return (v / 1000000).toFixed(1) + 'M';
+}
+
+/** 给角色列表里的每个角色打上用量徽章 */
+function refreshCharBadges() {
+    const s = getSettings();
+    const list = document.querySelector(CHAR_LIST_SEL);
+    if (!list) return;
+
+    if (!s.showCharBadge) {
+        for (const b of list.querySelectorAll(`.${BADGE_CLS}`)) b.remove();
+        return;
+    }
+
+    const usage = usageByCharacter(s.badgeRange || 'all');
+
+    for (const item of list.querySelectorAll('.character_select')) {
+        const nameEl = item.querySelector('.ch_name');
+        if (!nameEl) continue;
+        const name = nameEl.textContent.trim();
+        const stat = usage.get(name);
+        const block = nameEl.closest('.character_name_block') || nameEl.parentElement;
+
+        let badge = block.querySelector(`.${BADGE_CLS}`);
+        if (!stat) {
+            badge?.remove();      // 该角色没有记录，不留空徽章
+            continue;
+        }
+        if (!badge) {
+            badge = document.createElement('small');
+            badge.className = BADGE_CLS;
+            // 插在角色名后面（版本号之前），视觉上更贴近名字
+            nameEl.insertAdjacentElement('afterend', badge);
+        }
+        const label = `${shortNum(stat.total)} · ${stat.calls} 次`;
+        if (badge.textContent !== label) badge.textContent = label;
+        badge.title = `${name}\n累计 ${fmtFull(stat.total)} tokens · ${stat.calls} 次调用\n范围：${RANGES[s.badgeRange]?.label ?? '全部'}（可在扩展设置里改）`;
+    }
+}
+
+let charObserver = null;
+let charObserverRetry = null;
+
+/** 监听角色列表 DOM 变化，列表重绘后自动补徽章 */
+function installCharBadgeObserver() {
+    if (charObserver) return;
+    const list = document.querySelector(CHAR_LIST_SEL);
+    if (!list) {
+        // 扩展加载时角色列表可能还没渲染出来，稍后重试（最多约 30 秒）
+        if ((charObserverRetry = (charObserverRetry || 0) + 1) <= 30) {
+            setTimeout(installCharBadgeObserver, 1000);
+        }
+        return;
+    }
+
+    let t = null;
+    charObserver = new MutationObserver(() => {
+        if (t) return;
+        t = setTimeout(() => {
+            t = null;
+            refreshCharBadges();
+        }, 250);   // 防抖：翻页时会连续触发
+    });
+    charObserver.observe(list, { childList: true, subtree: true });
+    refreshCharBadges();
 }
 
 function statTile(label, value, sub, extraClass = '') {
@@ -558,6 +663,28 @@ async function addExtensionUI() {
             exp.addEventListener('click', exportCsv);
         }
 
+        // 角色列表徽章开关
+        const badgeToggle = document.getElementById('ts-char-badge');
+        if (badgeToggle) {
+            badgeToggle.checked = getSettings().showCharBadge !== false;
+            badgeToggle.addEventListener('change', () => {
+                getSettings().showCharBadge = badgeToggle.checked;
+                saveSettingsDebounced();
+                refreshCharBadges();
+            });
+        }
+
+        // 徽章统计范围
+        const badgeRange = document.getElementById('ts-badge-range');
+        if (badgeRange) {
+            badgeRange.value = getSettings().badgeRange || 'all';
+            badgeRange.addEventListener('change', () => {
+                getSettings().badgeRange = badgeRange.value;
+                saveSettingsDebounced();
+                refreshCharBadges();
+            });
+        }
+
         const clr = document.getElementById('ts-clear');
         if (clr) {
             clr.addEventListener('click', async () => {
@@ -644,6 +771,7 @@ function updateStatus() {
 
 getSettings();
 installInterceptor();
+installCharBadgeObserver();
 addExtensionUI().then(() => {
     console.log('[token-stats] Token 用量统计已加载');
 });
@@ -654,7 +782,8 @@ window.tokenStats = {
     records: () => getSettings().records,
     summary: (range = 'today') => sumRecords(filterByRange(getSettings().records, range)),
     render: () => renderPanel(),
-    clear: () => { getSettings().records = []; saveSettingsDebounced(); renderPanel(); updateStatus(); },
+    refreshBadges: () => refreshCharBadges(),
+    clear: () => { getSettings().records = []; saveSettingsDebounced(); renderPanel(); updateStatus(); refreshCharBadges(); },
     export: () => exportCsv(),
 
     /** 自检：确认拦截器、面板、数据链路是否都正常 */
