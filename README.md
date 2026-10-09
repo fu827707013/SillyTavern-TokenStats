@@ -4,6 +4,20 @@
 
 ![统计面板](https://img.shields.io/badge/SillyTavern-1.19.0-blue)
 
+输入框下方常驻一条实时统计，鼠标悬浮展开明细：
+
+![实时统计条](docs/01-composer-bar.png)
+
+<img src="docs/02-hover-panel.png" alt="悬浮展开明细" width="640">
+
+设置面板里的完整统计：
+
+<img src="docs/03-settings-panel.png" alt="设置面板" width="420">
+
+每个角色的用量直接标在角色列表里：
+
+<img src="docs/04-char-badges.png" alt="角色用量徽章" width="380">
+
 ## 它解决什么问题
 
 酒馆前端其实**拿到了**每次请求的真实 token 用量，但从不使用：
@@ -155,9 +169,9 @@ SillyTavern/public/scripts/extensions/third-party/token-stats/
 
 打开右侧**角色管理**面板，聊过的角色名后面会跟一个紧凑徽章：
 
-```
-陈默  2.2k · 1 次   1.0
-```
+<img src="docs/04-char-badges.png" alt="角色用量徽章" width="380">
+
+上例中「陈默」后面的 `2.2k · 1 次` 就是这个角色的累计用量。
 
 - 鼠标悬停看完整信息（累计 tokens、调用次数、统计范围）
 - 统计范围可在扩展面板里选（默认「全部」）
@@ -170,6 +184,8 @@ SillyTavern/public/scripts/extensions/third-party/token-stats/
 > 翻页 / 搜索 / 改每页数量都能正常工作。
 
 ### 面板上能看到什么
+
+<img src="docs/03-settings-panel.png" alt="设置面板" width="420">
 
 **8 个指标卡**：总 tokens、输入、输出、**缓存命中率**（独立成卡，强调色描边）、缓存读（附未命中量）、缓存写、思考、调用次数（附平均每次）
 
