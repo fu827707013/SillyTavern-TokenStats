@@ -19,7 +19,7 @@
  *   在此克隆响应流旁路读取，不影响 ST 自身消费。
  */
 
-import { saveSettingsDebounced } from '../../../../script.js';
+import { saveSettingsDebounced, getMaxContextTokens, eventSource, event_types } from '../../../../script.js';
 import { extension_settings, renderExtensionTemplateAsync, getContext } from '../../../extensions.js';
 import { POPUP_TYPE, callGenericPopup } from '../../../popup.js';
 
@@ -33,6 +33,7 @@ const defaultSettings = {
     showRecent: false,    // 「最近调用」明细默认折叠，避免把面板拉得很长
     showCharBadge: true,  // 在右侧角色列表给每个角色显示用量徽章
     badgeRange: 'all',    // 角色徽章统计哪个范围
+    showComposerBar: true, // 聊天框下方显示实时统计条
     records: [],          // { t, model, source, prompt, completion, total, cacheRead, cacheWrite, reasoning, chat }
 };
 
@@ -341,6 +342,7 @@ function scheduleRender() {
         renderPanel();
         updateStatus();
         refreshCharBadges();
+        refreshComposerBar();
     }, 400);
 }
 
@@ -440,6 +442,193 @@ function installCharBadgeObserver() {
     });
     charObserver.observe(list, { childList: true, subtree: true });
     refreshCharBadges();
+}
+
+// ─────────────────── 聊天框下方的实时统计条 ───────────────────
+//
+// 参考 DSH 的 ContextMeter 设计：一个环形进度 + 百分比，点击展开明细。
+// 放在发送区上方（#form_sheld 内，#send_form 之前）。
+//
+// 上下文占用 = 本回合实际发出的 prompt_tokens / 模型上下文窗口
+//   · 分子用「最近一次调用」的真实 prompt_tokens（不是估算）
+//   · 分母用 ST 自己的 getMaxContextTokens()，跟随用户设置的上下文大小
+
+const COMPOSER_BAR_ID = 'ts-composer-bar';
+const RING_RADIUS = 5.5;
+const RING_CIRC = 2 * Math.PI * RING_RADIUS;
+
+/** 最近一次调用的 prompt_tokens（= 本回合实际占用上下文） */
+function latestPromptTokens() {
+    const recs = getSettings().records;
+    return recs.length ? num(recs[recs.length - 1].prompt) : 0;
+}
+
+/** 取上下文窗口大小；拿不到就返回 0（不显示百分比） */
+function contextWindowSize() {
+    try {
+        const max = Number(getMaxContextTokens());
+        return Number.isFinite(max) && max > 0 ? max : 0;
+    } catch {
+        return 0;
+    }
+}
+
+function composerBarHTML() {
+    const used = latestPromptTokens();
+    const max = contextWindowSize();
+    const s = getSettings();
+    const today = sumRecords(filterByRange(s.records, 'today'));
+    const total = sumRecords(s.records);
+    const rate = cacheHitRate(sumRecords(s.records));
+    const pct = max > 0 ? Math.min(100, used / max * 100) : 0;
+    const dash = RING_CIRC * pct / 100;
+
+    return `
+        <button type="button" class="ts-bar-trigger" id="ts-bar-trigger"
+                aria-label="上下文已用 ${Math.round(pct)}%" aria-expanded="false" title="点击查看用量明细">
+            <svg viewBox="0 0 14 14" width="13" height="13" aria-hidden="true">
+                <circle class="ts-ring-track" cx="7" cy="7" r="${RING_RADIUS}"></circle>
+                <circle class="ts-ring-fill" cx="7" cy="7" r="${RING_RADIUS}"
+                        stroke-dasharray="${dash.toFixed(2)} ${RING_CIRC.toFixed(2)}"
+                        transform="rotate(-90 7 7)"></circle>
+            </svg>
+            <span class="ts-bar-pct">${max > 0 ? Math.round(pct) + '%' : '—'}</span>
+            <span class="ts-bar-sep">·</span>
+            <span class="ts-bar-item" title="本次请求实际占用的上下文 tokens">上下文 ${shortNum(used)} / ${shortNum(max)}</span>
+            <span class="ts-bar-sep">·</span>
+            <span class="ts-bar-item" title="今日累计消耗">今日 ${shortNum(today.total)}</span>
+            <span class="ts-bar-sep">·</span>
+            <span class="ts-bar-item" title="全部历史累计消耗">累计 ${shortNum(total.total)}</span>
+            ${rate !== null ? `<span class="ts-bar-sep">·</span>
+            <span class="ts-bar-item ts-bar-cache" title="缓存命中率（命中 / 输入）">缓存 ${rate.toFixed(0)}%</span>` : ''}
+        </button>
+        <div class="ts-bar-panel" id="ts-bar-panel" role="dialog" aria-label="Token 用量" hidden>
+            <div class="ts-bar-panel-head">
+                <span>Token 用量</span>
+                <span class="ts-bar-panel-total">${fmtFull(total.total)} tok</span>
+            </div>
+            <div class="ts-bar-panel-rows">
+                <div class="ts-bar-panel-row"><span>上下文已用</span><span>${max > 0 ? Math.round(pct) + '%' : '未知'}（${fmtFull(used)} / ${max ? fmtFull(max) : '—'}）</span></div>
+                <div class="ts-bar-panel-row"><span>缓存命中</span><span>${rate !== null ? rate.toFixed(1) + '%' : '—'}</span></div>
+                <div class="ts-bar-panel-row"><span>未缓存输入</span><span>${fmtFull(sumRecords(s.records).cacheMiss)} tok</span></div>
+                <div class="ts-bar-panel-row"><span>缓存读取</span><span>${fmtFull(total.cacheRead)} tok</span></div>
+                <div class="ts-bar-panel-row"><span>今日用量</span><span>${fmtFull(today.total)} tok · ${today.calls} 次</span></div>
+                <div class="ts-bar-panel-row"><span>累计输出</span><span>${fmtFull(total.completion)} tok</span></div>
+                <div class="ts-bar-panel-row"><span>调用次数</span><span>${fmtFull(total.calls)} 次</span></div>
+            </div>
+        </div>
+    `;
+}
+
+/** 刷新（不存在则创建）聊天框下方的统计条 */
+function refreshComposerBar() {
+    const holder = document.getElementById('form_sheld');
+    if (!holder) return;
+
+    const existing = document.getElementById(COMPOSER_BAR_ID);
+    const s = getSettings();
+
+    if (!s.showComposerBar) {
+        existing?.remove();
+        return;
+    }
+
+    if (!existing) {
+        const wrap = document.createElement('div');
+        wrap.id = COMPOSER_BAR_ID;
+        wrap.innerHTML = composerBarHTML();
+        holder.insertBefore(wrap, holder.firstChild);
+        bindComposerBar();
+        return;
+    }
+    // 原地更新，避免整块重建导致面板被关闭、动画重放
+    existing.innerHTML = composerBarHTML();
+    bindComposerBar();
+}
+
+/**
+ * 绑定统计条交互。
+ *
+ * 这里用「事件委托」绑在容器上，而不是绑在按钮上 —— 因为刷新时是
+ * `wrap.innerHTML = ...` 重建内部节点，直接绑按钮的话每次重绘都要重绑，
+ * 一旦漏绑按钮就失灵。容器本身是持久的，绑一次就够。
+ *
+ * 另外 document 级监听器也只注册一次，避免重绘时不断堆积。
+ */
+let composerDocBound = false;
+
+function bindComposerDocListeners() {
+    if (composerDocBound) return;
+    composerDocBound = true;
+
+    document.addEventListener('click', (e) => {
+        const w = document.getElementById(COMPOSER_BAR_ID);
+        if (!w) return;
+        const p = w.querySelector('#ts-bar-panel');
+        if (!p || p.hidden) return;
+        if (!w.contains(e.target)) {
+            p.hidden = true;
+            w.querySelector('#ts-bar-trigger')?.setAttribute('aria-expanded', 'false');
+        }
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        const w = document.getElementById(COMPOSER_BAR_ID);
+        const p = w?.querySelector('#ts-bar-panel');
+        if (p && !p.hidden) {
+            p.hidden = true;
+            w.querySelector('#ts-bar-trigger')?.setAttribute('aria-expanded', 'false');
+        }
+    });
+}
+
+function bindComposerBar() {
+    const wrap = document.getElementById(COMPOSER_BAR_ID);
+    if (!wrap || wrap.dataset.bound === '1') return;
+    wrap.dataset.bound = '1';
+
+    bindComposerDocListeners();
+
+    // 委托：容器持久，内部节点随便重建
+    wrap.addEventListener('click', (e) => {
+        const trigger = e.target.closest?.('#ts-bar-trigger');
+        if (!trigger) return;
+        e.stopPropagation();
+
+        const w = document.getElementById(COMPOSER_BAR_ID);
+        if (!w) return;
+        const wasOpen = w.querySelector('#ts-bar-panel')?.hidden === false;
+
+        // 重绘成最新数据（dataset.bound 在容器上，不受 innerHTML 影响）
+        w.innerHTML = composerBarHTML();
+
+        const p = w.querySelector('#ts-bar-panel');
+        const t2 = w.querySelector('#ts-bar-trigger');
+        if (!p || !t2) return;
+        // 再点一次就是收起
+        p.hidden = wasOpen;
+        t2.setAttribute('aria-expanded', wasOpen ? 'false' : 'true');
+    });
+}
+
+let composerRetry = 0;
+
+/** 挂载统计条；发送区可能晚于扩展加载出现，所以带重试 */
+function installComposerBar() {
+    const holder = document.getElementById('form_sheld');
+    if (!holder) {
+        if ((composerRetry = (composerRetry || 0) + 1) <= 30) setTimeout(installComposerBar, 1000);
+        return;
+    }
+    refreshComposerBar();
+
+    // 聊天切换 / 新消息 / 生成结束时刷新
+    const evs = ['CHAT_CHANGED', 'MESSAGE_SENT', 'MESSAGE_RECEIVED', 'GENERATION_ENDED', 'GENERATION_STOPPED'];
+    for (const name of evs) {
+        const evt = event_types?.[name];
+        if (evt) eventSource.on(evt, () => setTimeout(refreshComposerBar, 150));
+    }
 }
 
 function statTile(label, value, sub, extraClass = '') {
@@ -685,6 +874,17 @@ async function addExtensionUI() {
             });
         }
 
+        // 聊天框统计条开关
+        const barToggle = document.getElementById('ts-composer-toggle');
+        if (barToggle) {
+            barToggle.checked = getSettings().showComposerBar !== false;
+            barToggle.addEventListener('change', () => {
+                getSettings().showComposerBar = barToggle.checked;
+                saveSettingsDebounced();
+                refreshComposerBar();
+            });
+        }
+
         const clr = document.getElementById('ts-clear');
         if (clr) {
             clr.addEventListener('click', async () => {
@@ -772,6 +972,7 @@ function updateStatus() {
 getSettings();
 installInterceptor();
 installCharBadgeObserver();
+installComposerBar();
 addExtensionUI().then(() => {
     console.log('[token-stats] Token 用量统计已加载');
 });
@@ -783,7 +984,8 @@ window.tokenStats = {
     summary: (range = 'today') => sumRecords(filterByRange(getSettings().records, range)),
     render: () => renderPanel(),
     refreshBadges: () => refreshCharBadges(),
-    clear: () => { getSettings().records = []; saveSettingsDebounced(); renderPanel(); updateStatus(); refreshCharBadges(); },
+    refreshComposerBar: () => refreshComposerBar(),
+    clear: () => { getSettings().records = []; saveSettingsDebounced(); renderPanel(); updateStatus(); refreshCharBadges(); refreshComposerBar(); },
     export: () => exportCsv(),
 
     /** 自检：确认拦截器、面板、数据链路是否都正常 */

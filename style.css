@@ -1,6 +1,126 @@
 /* Token 用量统计 — 面板样式
    沿用 ST 自身的 CSS 变量，自动适配明暗主题 */
 
+/* ─────────────── 聊天框上方的实时统计条 ───────────────
+   参考 DSH 的 ContextMeter：环形进度 + 百分比，点击展开明细。
+   整体克制：小字号、低对比，不抢聊天内容注意力。 */
+#ts-composer-bar {
+    display: flex;
+    justify-content: center;
+    position: relative;
+    padding: 2px 8px 4px;
+}
+
+#ts-composer-bar .ts-bar-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 10px;
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--SmartThemeBodyColor, #ccc);
+    opacity: 0.65;
+    font-family: inherit;
+    font-size: 0.78em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.6;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: opacity 0.15s ease, background-color 0.15s ease;
+}
+
+#ts-composer-bar .ts-bar-trigger:hover,
+#ts-composer-bar .ts-bar-trigger[aria-expanded="true"] {
+    opacity: 1;
+    background-color: var(--white20a, rgba(255,255,255,0.08));
+}
+
+#ts-composer-bar .ts-ring-track {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    opacity: 0.28;
+}
+
+#ts-composer-bar .ts-ring-fill {
+    fill: none;
+    stroke: var(--SmartThemeQuoteColor, #4a7dab);
+    stroke-width: 2;
+    stroke-linecap: round;
+    transition: stroke-dasharray 0.3s ease;
+}
+
+#ts-composer-bar .ts-bar-pct {
+    font-weight: 600;
+    color: var(--SmartThemeQuoteColor, #4a7dab);
+}
+
+#ts-composer-bar .ts-bar-sep {
+    opacity: 0.35;
+}
+
+#ts-composer-bar .ts-bar-cache {
+    color: var(--SmartThemeQuoteColor, #4a7dab);
+}
+
+/* 展开的明细面板 */
+#ts-composer-bar .ts-bar-panel {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 3000;
+    box-sizing: border-box;
+    width: min(280px, calc(100vw - 24px));
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(128,128,128,0.3));
+    background-color: var(--SmartThemeBlurTintColor, #1a1a1a);
+    box-shadow: 0 4px 18px rgba(0,0,0,0.45);
+    color: var(--SmartThemeBodyColor, #ddd);
+    font-size: 0.8em;
+    line-height: 1.7;
+    cursor: default;
+}
+
+#ts-composer-bar .ts-bar-panel[hidden] {
+    display: none;
+}
+
+#ts-composer-bar .ts-bar-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding-bottom: 6px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(128,128,128,0.25));
+    font-weight: 600;
+}
+
+#ts-composer-bar .ts-bar-panel-total {
+    color: var(--SmartThemeQuoteColor, #4a7dab);
+    font-variant-numeric: tabular-nums;
+}
+
+#ts-composer-bar .ts-bar-panel-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 1px 0;
+}
+
+#ts-composer-bar .ts-bar-panel-row > span:first-child {
+    opacity: 0.65;
+}
+
+#ts-composer-bar .ts-bar-panel-row > span:last-child {
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
 /* ─────────────────── 角色列表用量徽章 ───────────────────
    名字区空间极紧（366px 里名字占 339px），所以徽章必须做小：
    小字号 + 不换行 + 允许被压缩省略，绝不撑破列表布局。 */
