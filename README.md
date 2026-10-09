@@ -12,7 +12,7 @@
 
 设置面板里的完整统计：
 
-<img src="docs/03-settings-panel.png" alt="设置面板" width="420">
+<img src="docs/03-settings-panel.png" alt="设置面板" width="330">
 
 每个角色的用量直接标在角色列表里：
 
@@ -185,7 +185,7 @@ SillyTavern/public/scripts/extensions/third-party/token-stats/
 
 ### 面板上能看到什么
 
-<img src="docs/03-settings-panel.png" alt="设置面板" width="420">
+<img src="docs/03-settings-panel.png" alt="设置面板" width="330">
 
 **8 个指标卡**：总 tokens、输入、输出、**缓存命中率**（独立成卡，强调色描边）、缓存读（附未命中量）、缓存写、思考、调用次数（附平均每次）
 
