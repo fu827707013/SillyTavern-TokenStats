@@ -54,19 +54,26 @@
 }
 
 /* ── 指标卡片 ── */
-/* 固定 3 列：6 个指标正好排成 2 行，不会出现「最后一张单独换行」 */
+/* 固定 4 列：8 个指标正好排成 2 行，不会出现「最后一张单独换行」 */
 .token-stats-settings .ts-tiles {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 6px;
     margin-bottom: 14px;
+}
+
+/* 窄容器（手机 / 侧栏变窄）降级为 2 列，仍然整除不留孤儿 */
+@media (max-width: 640px) {
+    .token-stats-settings .ts-tiles {
+        grid-template-columns: repeat(2, 1fr);
+    }
 }
 
 .token-stats-settings .ts-tile {
     background-color: var(--black30a, rgba(0,0,0,0.2));
     border: 1px solid var(--SmartThemeBorderColor, rgba(128,128,128,0.25));
     border-radius: 6px;
-    padding: 8px 10px;
+    padding: 8px 6px;
     text-align: center;
     overflow: hidden;
 }
@@ -164,10 +171,22 @@
 }
 
 /* ── 表格 ── */
+/* 外层容器负责横向滚动，避免窄面板时表格撑破布局 */
+.token-stats-settings .ts-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
 .token-stats-settings .ts-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 0.82em;
+}
+
+.token-stats-settings .ts-hint-inline {
+    font-weight: 400;
+    opacity: 0.5;
+    font-size: 0.9em;
 }
 
 .token-stats-settings .ts-table th {
@@ -182,7 +201,7 @@
 .token-stats-settings .ts-table td {
     padding: 3px 6px;
     border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(128,128,128,0.12));
-    max-width: 220px;
+    max-width: 140px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

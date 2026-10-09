@@ -21,6 +21,7 @@
 
 import { saveSettingsDebounced } from '../../../../script.js';
 import { extension_settings, renderExtensionTemplateAsync, getContext } from '../../../extensions.js';
+import { POPUP_TYPE, callGenericPopup } from '../../../popup.js';
 
 const MODULE_NAME = 'token-stats';
 const MAX_RECORDS = 3000;
@@ -28,7 +29,9 @@ const GENERATE_URL = '/api/backends/chat-completions/generate';
 
 const defaultSettings = {
     enabled: true,
-    records: [],        // { t, model, source, prompt, completion, total, cacheRead, cacheWrite, reasoning, chat }
+    showCache: true,      // 是否在页面显示缓存相关指标
+    range: 'today',       // 记住上次选的时间范围
+    records: [],          // { t, model, source, prompt, completion, total, cacheRead, cacheWrite, reasoning, chat }
 };
 
 function getSettings() {
@@ -137,6 +140,9 @@ async function captureUsage(response, init) {
 
     const meta = readRequestMeta(init);
 
+    // 出错的响应不统计（否则会把错误信息当成"没有 usage"计入未命中）
+    if (!response.ok) return;
+
     let text = '';
     try {
         const clone = response.clone();
@@ -154,7 +160,14 @@ async function captureUsage(response, init) {
 
     const raw = extractUsage(text);
     const usage = normalizeUsage(raw);
-    if (!usage) return;   // 非补全请求（如状态查询）或上游未给 usage
+
+    if (!usage) {
+        // 上游没给 usage —— 记一笔，让用户知道"统计不到"而不是"没在工作"
+        s.missedCalls = num(s.missedCalls) + 1;
+        saveSettingsDebounced();
+        updateStatus();
+        return;
+    }
 
     const rec = {
         t: Date.now(),
@@ -237,7 +250,25 @@ function sumRecords(records) {
         acc.cacheWrite += num(r.cacheWrite);
         acc.reasoning += num(r.reasoning);
     }
+    // 未命中的输入 = 输入总量 - 缓存命中量（下限 0，防上游字段异常时出负数）
+    acc.cacheMiss = Math.max(0, acc.prompt - acc.cacheRead);
     return acc;
+}
+
+/**
+ * 缓存命中率。
+ *
+ * ⚠️ 关键：上游的 prompt_tokens **已经包含**缓存命中的部分，三者关系是
+ *     prompt_tokens = prompt_cache_hit_tokens + prompt_cache_miss_tokens
+ * （2026-10-09 用同一段长前缀连续请求实测确认：两次 prompt_tokens 均为 1287，
+ *   第一次 hit=0/miss=1287，第二次 hit=1152/miss=135）
+ *
+ * 所以分母就是 prompt_tokens，不能再加一次 cacheRead ——
+ * 否则 1152/1287 = 89.5% 会被算成 1152/(1152+1287) = 47.2%，凭空少一半。
+ */
+function cacheHitRate(sum) {
+    if (!sum.prompt) return null;
+    return sum.cacheRead / sum.prompt * 100;
 }
 
 function groupBy(records, key) {
@@ -252,7 +283,10 @@ function groupBy(records, key) {
         .sort((a, b) => b.total - a.total);
 }
 
-/** 按天分组（近 N 天，从早到晚） */
+/**
+ * 按天分组。
+ * days 传 0 表示不限制（"全部"范围用），否则只保留最近 N 天。
+ */
 function groupByDay(records, days) {
     const buckets = new Map();
     for (const r of records) {
@@ -261,10 +295,10 @@ function groupByDay(records, days) {
         if (!buckets.has(key)) buckets.set(key, []);
         buckets.get(key).push(r);
     }
-    return [...buckets.entries()]
+    const all = [...buckets.entries()]
         .map(([day, list]) => ({ day, ...sumRecords(list) }))
-        .sort((a, b) => a.day.localeCompare(b.day))
-        .slice(-Math.max(days, 1));
+        .sort((a, b) => a.day.localeCompare(b.day));
+    return days > 0 ? all.slice(-days) : all;
 }
 
 // ─────────────────────────── 渲染 ───────────────────────────
@@ -337,29 +371,33 @@ function renderPanel() {
 
     const byModel = groupBy(scoped, 'model');
     const bySource = groupBy(scoped, 'source');
-    const byDay = groupByDay(scoped, 30);
+    const byChat = groupBy(scoped, 'chat').filter(c => c.name && c.name !== '未知角色');
+    // 「全部」范围不限制天数，其他范围最多看 30 天
+    const byDay = groupByDay(scoped, currentRange === 'all' ? 0 : 30);
     const maxModel = Math.max(...byModel.map(m => m.total), 1);
     const maxSource = Math.max(...bySource.map(m => m.total), 1);
     const maxDay = Math.max(...byDay.map(d => d.total), 1);
 
-    // 缓存命中率：缓存读 /（缓存读 + 未命中）
-    const cacheDenom = sum.cacheRead + scoped.reduce((a, r) => a + num(r.prompt), 0);
-    const cacheRate = cacheDenom > 0 ? (sum.cacheRead / cacheDenom * 100).toFixed(1) : '0.0';
+    const rate = cacheHitRate(sum);
+    const rateText = rate === null ? '—' : `命中率 ${rate.toFixed(1)}%`;
+    const pct = (part) => (sum.total ? (part / sum.total * 100).toFixed(1) : '0.0');
 
     root.innerHTML = `
         <div class="ts-tiles">
             ${statTile('总 tokens', fmt(sum.total), fmtFull(sum.total))}
-            ${statTile('输入', fmt(sum.prompt), `${(sum.total ? sum.prompt / sum.total * 100 : 0).toFixed(1)}%`)}
-            ${statTile('输出', fmt(sum.completion), `${(sum.total ? sum.completion / sum.total * 100 : 0).toFixed(1)}%`)}
-            ${statTile('缓存读', fmt(sum.cacheRead), `命中率 ${cacheRate}%`)}
-            ${statTile('思考', fmt(sum.reasoning), sum.reasoning ? '推理 token' : '—')}
+            ${statTile('输入', fmt(sum.prompt), `${pct(sum.prompt)}%`)}
+            ${statTile('输出', fmt(sum.completion), `${pct(sum.completion)}%`)}
+            ${statTile('缓存读', fmt(sum.cacheRead), rateText)}
+            ${statTile('缓存写', fmt(sum.cacheWrite), sum.cacheWrite ? '写入缓存' : '—')}
+            ${statTile('思考', fmt(sum.reasoning), sum.reasoning ? `${pct(sum.reasoning)}%` : '—')}
             ${statTile('调用次数', fmtFull(sum.calls), '')}
+            ${statTile('平均每次', fmt(sum.calls ? Math.round(sum.total / sum.calls) : 0), 'tokens')}
         </div>
 
         <div class="ts-section">
             <div class="ts-section-title">按模型</div>
             ${byModel.map(m => barRow(m, maxModel,
-                `输入 ${fmt(m.prompt)} · 输出 ${fmt(m.completion)} · 缓存读 ${fmt(m.cacheRead)}`)).join('')}
+                `输入 ${fmt(m.prompt)} · 输出 ${fmt(m.completion)}${m.cacheRead ? ` · 缓存读 ${fmt(m.cacheRead)}` : ''}`)).join('')}
         </div>
 
         <div class="ts-section">
@@ -368,8 +406,15 @@ function renderPanel() {
                 `输入 ${fmt(m.prompt)} · 输出 ${fmt(m.completion)}`)).join('')}
         </div>
 
+        ${byChat.length ? `
         <div class="ts-section">
-            <div class="ts-section-title">按天</div>
+            <div class="ts-section-title">按角色</div>
+            ${byChat.map(m => barRow(m, Math.max(...byChat.map(c => c.total), 1),
+                `${m.calls} 次调用`)).join('')}
+        </div>` : ''}
+
+        <div class="ts-section">
+            <div class="ts-section-title">按天${currentRange === 'all' && byDay.length > 30 ? `（共 ${byDay.length} 天）` : ''}</div>
             ${byDay.map(d => `
                 <div class="ts-bar-row">
                     <div class="ts-bar-head">
@@ -381,7 +426,8 @@ function renderPanel() {
         </div>
 
         <div class="ts-section">
-            <div class="ts-section-title">最近调用</div>
+            <div class="ts-section-title">最近调用<span class="ts-hint-inline">（最多 25 条）</span></div>
+            <div class="ts-table-wrap">
             <table class="ts-table">
                 <thead><tr><th>时间</th><th>模型</th><th class="ts-num">输入</th><th class="ts-num">输出</th><th class="ts-num">合计</th></tr></thead>
                 <tbody>
@@ -399,6 +445,7 @@ function renderPanel() {
                 }).join('')}
                 </tbody>
             </table>
+            </div>
         </div>
     `;
 }
@@ -433,6 +480,12 @@ const EXTENSION_NAME = resolveExtensionName();
 
 async function addExtensionUI() {
     try {
+        // 防重复注入：热重载或异常路径可能让本函数跑第二次
+        if (document.querySelector('.token-stats-settings')) {
+            console.warn('[token-stats] 面板已存在，跳过重复注入');
+            return;
+        }
+
         const html = await renderExtensionTemplateAsync(EXTENSION_NAME, 'settings');
         const mount = document.getElementById('extensions_settings2') || document.getElementById('extensions_settings');
         if (!mount) {
@@ -441,10 +494,18 @@ async function addExtensionUI() {
         }
         mount.insertAdjacentHTML('beforeend', html);
 
+        // 恢复上次选择的时间范围
+        currentRange = getSettings().range || 'today';
+        for (const b of document.querySelectorAll('.ts-range-btn')) {
+            b.classList.toggle('ts-active', b.dataset.range === currentRange);
+        }
+
         // 范围切换
         for (const btn of document.querySelectorAll('.ts-range-btn')) {
             btn.addEventListener('click', () => {
                 currentRange = btn.dataset.range || 'today';
+                getSettings().range = currentRange;
+                saveSettingsDebounced();
                 for (const b of document.querySelectorAll('.ts-range-btn')) {
                     b.classList.toggle('ts-active', b === btn);
                 }
@@ -463,11 +524,30 @@ async function addExtensionUI() {
             });
         }
 
+        // 导出 CSV
+        const exp = document.getElementById('ts-export');
+        if (exp) {
+            exp.addEventListener('click', exportCsv);
+        }
+
         const clr = document.getElementById('ts-clear');
         if (clr) {
-            clr.addEventListener('click', () => {
-                if (!confirm('确定清空全部用量记录？此操作不可撤销。')) return;
-                getSettings().records = [];
+            clr.addEventListener('click', async () => {
+                const s = getSettings();
+                if (!s.records.length) {
+                    toastr.info('没有可清空的记录', 'Token 用量统计');
+                    return;
+                }
+                // 用酒馆原生弹窗，风格与 ST 一致（confirm() 在部分环境会被拦截）
+                const ok = await callGenericPopup(
+                    `确定清空全部 <b>${s.records.length}</b> 条用量记录？<br>此操作不可撤销。`,
+                    POPUP_TYPE.CONFIRM,
+                    '',
+                    { okButton: '清空', cancelButton: '取消' },
+                );
+                if (!ok) return;
+                s.records = [];
+                s.missedCalls = 0;
                 saveSettingsDebounced();
                 renderPanel();
                 updateStatus();
@@ -482,14 +562,54 @@ async function addExtensionUI() {
     }
 }
 
+/** 导出为 CSV，方便自己用 Excel 对账 */
+function exportCsv() {
+    const s = getSettings();
+    const rows = filterByRange(s.records, currentRange);
+    if (!rows.length) {
+        toastr.info('当前范围没有可导出的记录', 'Token 用量统计');
+        return;
+    }
+    const head = ['时间', '模型', '渠道', '角色', '输入', '输出', '合计', '缓存读', '缓存写', '思考'];
+    const esc2 = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const lines = [head.join(',')];
+    for (const r of rows) {
+        const d = new Date(r.t);
+        const ts = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+        lines.push([ts, r.model, r.source, r.chat, num(r.prompt), num(r.completion), num(r.total), num(r.cacheRead), num(r.cacheWrite), num(r.reasoning)].map(esc2).join(','));
+    }
+    // 加 BOM，Excel 打开中文不乱码
+    const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `token-usage-${currentRange}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    toastr.success(`已导出 ${rows.length} 条记录`, 'Token 用量统计');
+}
+
 function updateStatus() {
     const el = document.getElementById('ts-status');
     if (!el) return;
     const s = getSettings();
     const sum = sumRecords(filterByRange(s.records, 'today'));
-    el.textContent = s.enabled
-        ? `记录中 · 今日 ${fmt(sum.total)} tokens · ${sum.calls} 次调用 · 累计 ${s.records.length} 条记录`
-        : `已暂停 · 累计 ${s.records.length} 条记录（保留中）`;
+
+    if (!s.enabled) {
+        el.textContent = `已暂停 · 累计 ${s.records.length} 条记录（历史数据保留）`;
+        return;
+    }
+
+    let text = `记录中 · 今日 ${fmt(sum.total)} tokens · ${sum.calls} 次调用 · 累计 ${s.records.length} 条`;
+
+    // 上游没返回 usage 时提示，避免用户误以为插件坏了
+    const missed = num(s.missedCalls);
+    if (missed > 0) {
+        text += ` · ⚠ ${missed} 次未返回用量`;
+        el.title = '部分调用上游没有返回 usage 字段，这类调用无法统计（通常是网关不支持）。可在控制台跑 window.tokenStats.diagnose() 看详情。';
+    } else {
+        el.title = '';
+    }
+    el.textContent = text;
 }
 
 // ─────────────────────────── 入口 ───────────────────────────
@@ -506,5 +626,32 @@ window.tokenStats = {
     records: () => getSettings().records,
     summary: (range = 'today') => sumRecords(filterByRange(getSettings().records, range)),
     render: () => renderPanel(),
-    clear: () => { getSettings().records = []; saveSettingsDebounced(); renderPanel(); },
+    clear: () => { getSettings().records = []; saveSettingsDebounced(); renderPanel(); updateStatus(); },
+    export: () => exportCsv(),
+
+    /** 自检：确认拦截器、面板、数据链路是否都正常 */
+    diagnose() {
+        const s = getSettings();
+        const sum = sumRecords(s.records);
+        const rate = cacheHitRate(sum);
+        return {
+            扩展名: EXTENSION_NAME,
+            拦截器已挂载: !!window.__tokenStatsPatched,
+            设置面板数量: document.querySelectorAll('.token-stats-settings').length,
+            启用统计: s.enabled,
+            记录总数: s.records.length,
+            未返回用量的调用: num(s.missedCalls),
+            全部合计: { 输入: sum.prompt, 输出: sum.completion, 合计: sum.total, 缓存读: sum.cacheRead },
+            缓存命中率: rate === null ? '无输入数据' : `${rate.toFixed(1)}%`,
+            记录上限: MAX_RECORDS,
+            提示: s.records.length === 0 ? '还没有数据，发一条消息试试' : '一切正常',
+        };
+    },
+
+    /** 清掉"未返回用量"计数（排查完想归零时用） */
+    resetMissed() {
+        getSettings().missedCalls = 0;
+        saveSettingsDebounced();
+        updateStatus();
+    },
 };
