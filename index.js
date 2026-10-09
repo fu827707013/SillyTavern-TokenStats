@@ -29,8 +29,8 @@ const GENERATE_URL = '/api/backends/chat-completions/generate';
 
 const defaultSettings = {
     enabled: true,
-    showCache: true,      // 是否在页面显示缓存相关指标
     range: 'today',       // 记住上次选的时间范围
+    showRecent: false,    // 「最近调用」明细默认折叠，避免把面板拉得很长
     records: [],          // { t, model, source, prompt, completion, total, cacheRead, cacheWrite, reasoning, chat }
 };
 
@@ -316,6 +316,11 @@ function fmtFull(n) {
     return num(n).toLocaleString('zh-CN');
 }
 
+/** 命中率格式化：null（无输入数据）显示 —，否则保留 1 位小数 */
+function fmtRate(rate) {
+    return rate === null ? '—' : `${rate.toFixed(1)}%`;
+}
+
 function esc(s) {
     return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -332,8 +337,8 @@ function scheduleRender() {
     }, 400);
 }
 
-function statTile(label, value, sub) {
-    return `<div class="ts-tile">
+function statTile(label, value, sub, extraClass = '') {
+    return `<div class="ts-tile${extraClass ? ' ' + extraClass : ''}">
         <div class="ts-tile-value">${esc(value)}</div>
         <div class="ts-tile-label">${esc(label)}</div>
         ${sub ? `<div class="ts-tile-sub">${esc(sub)}</div>` : ''}
@@ -379,19 +384,21 @@ function renderPanel() {
     const maxDay = Math.max(...byDay.map(d => d.total), 1);
 
     const rate = cacheHitRate(sum);
-    const rateText = rate === null ? '—' : `命中率 ${rate.toFixed(1)}%`;
+    const rateSub = rate === null ? '无输入数据' : '命中 / 输入';
     const pct = (part) => (sum.total ? (part / sum.total * 100).toFixed(1) : '0.0');
+    const showRecent = !!s.showRecent;
+    const recentRows = [...scoped].reverse().slice(0, 25);
 
     root.innerHTML = `
         <div class="ts-tiles">
             ${statTile('总 tokens', fmt(sum.total), fmtFull(sum.total))}
             ${statTile('输入', fmt(sum.prompt), `${pct(sum.prompt)}%`)}
             ${statTile('输出', fmt(sum.completion), `${pct(sum.completion)}%`)}
-            ${statTile('缓存读', fmt(sum.cacheRead), rateText)}
+            ${statTile('缓存命中率', fmtRate(rate), rateSub, 'ts-tile-accent')}
+            ${statTile('缓存读', fmt(sum.cacheRead), sum.prompt ? `未命中 ${fmt(sum.cacheMiss)}` : '—')}
             ${statTile('缓存写', fmt(sum.cacheWrite), sum.cacheWrite ? '写入缓存' : '—')}
             ${statTile('思考', fmt(sum.reasoning), sum.reasoning ? `${pct(sum.reasoning)}%` : '—')}
-            ${statTile('调用次数', fmtFull(sum.calls), '')}
-            ${statTile('平均每次', fmt(sum.calls ? Math.round(sum.total / sum.calls) : 0), 'tokens')}
+            ${statTile('调用次数', fmtFull(sum.calls), `平均 ${fmt(sum.calls ? Math.round(sum.total / sum.calls) : 0)}/次`)}
         </div>
 
         <div class="ts-section">
@@ -426,12 +433,18 @@ function renderPanel() {
         </div>
 
         <div class="ts-section">
-            <div class="ts-section-title">最近调用<span class="ts-hint-inline">（最多 25 条）</span></div>
+            <div class="ts-section-title ts-toggle-head" id="ts-recent-toggle" role="button" tabindex="0"
+                 title="${showRecent ? '点击收起' : '点击展开'}">
+                <span>最近调用</span>
+                <span class="ts-toggle-meta">${recentRows.length} 条</span>
+                <i class="fa-solid fa-chevron-${showRecent ? 'up' : 'down'} ts-toggle-icon"></i>
+            </div>
+            ${showRecent ? `
             <div class="ts-table-wrap">
             <table class="ts-table">
                 <thead><tr><th>时间</th><th>模型</th><th class="ts-num">输入</th><th class="ts-num">输出</th><th class="ts-num">合计</th></tr></thead>
                 <tbody>
-                ${[...scoped].reverse().slice(0, 25).map(r => {
+                ${recentRows.map(r => {
                     const d = new Date(r.t);
                     const hh = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
                     const date = `${d.getMonth() + 1}/${d.getDate()}`;
@@ -445,9 +458,24 @@ function renderPanel() {
                 }).join('')}
                 </tbody>
             </table>
-            </div>
+            </div>` : ''}
         </div>
     `;
+
+    // 折叠开关
+    const toggleHead = document.getElementById('ts-recent-toggle');
+    if (toggleHead) {
+        const flip = () => {
+            const st = getSettings();
+            st.showRecent = !st.showRecent;
+            saveSettingsDebounced();
+            renderPanel();
+        };
+        toggleHead.addEventListener('click', flip);
+        toggleHead.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); }
+        });
+    }
 }
 
 // ─────────────────────────── UI ───────────────────────────

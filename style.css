@@ -36,13 +36,21 @@
     border-color: var(--SmartThemeQuoteColor, #4a7dab);
 }
 
-.token-stats-settings #ts-clear {
-    margin-left: auto;
+/* 工具条里的按钮：统一不换行、不被压缩，否则「导出」会被挤成竖排两行 */
+.token-stats-settings .ts-toolbar .menu_button {
     white-space: nowrap;
     flex-shrink: 0;
     height: auto;
     min-height: unset;
     padding: 4px 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    line-height: 1.4;
+}
+
+.token-stats-settings #ts-clear {
+    margin-left: auto;
 }
 
 .token-stats-settings .ts-status {
@@ -100,6 +108,44 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+/* 重点指标（缓存命中率）—— 用主题强调色描边，一眼能看到 */
+.token-stats-settings .ts-tile-accent {
+    border-color: var(--SmartThemeQuoteColor, #4a7dab);
+    background-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #4a7dab) 12%, transparent);
+}
+
+.token-stats-settings .ts-tile-accent .ts-tile-value {
+    color: var(--SmartThemeQuoteColor, #4a7dab);
+}
+
+/* ── 可折叠的小节标题 ── */
+.token-stats-settings .ts-toggle-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    user-select: none;
+    padding: 4px 2px;
+    transition: opacity 0.15s ease;
+}
+
+.token-stats-settings .ts-toggle-head:hover {
+    opacity: 1;
+}
+
+.token-stats-settings .ts-toggle-meta {
+    font-weight: 400;
+    font-size: 0.9em;
+    opacity: 0.5;
+    margin-left: auto;
+}
+
+.token-stats-settings .ts-toggle-icon {
+    font-size: 0.8em;
+    opacity: 0.6;
+    transition: transform 0.2s ease;
 }
 
 /* ── 分组 ── */
