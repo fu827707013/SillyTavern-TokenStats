@@ -706,6 +706,33 @@ function bindComposerDocListeners() {
     });
 }
 
+/**
+ * 悬停命中区：只有指针落在「统计条按钮」或「展开的面板」上才算悬停。
+ *
+ * ⚠️ 不能把 mouseenter 绑在容器 #ts-composer-bar 上 —— 那个容器是整行宽的
+ * （实测 845px，而按钮只占中间 381px），绑在容器上会导致鼠标划过两侧
+ * 各 232px 的空白黑条也弹出面板，非常干扰。
+ *
+ * 另外 mouseenter/mouseleave 不冒泡，没法在容器上做委托，
+ * 所以改用会冒泡的 mouseover/mouseout + closest 判断。
+ */
+const HOVER_ZONE = '#ts-bar-trigger, #ts-bar-panel';
+
+function inHoverZone(el) {
+    return !!(el && typeof el.closest === 'function' && el.closest(HOVER_ZONE));
+}
+
+/** 延迟收起 —— 用来跨越按钮与面板之间那几像素的空隙 */
+function scheduleComposerClose() {
+    if (composerPinned) return;
+    cancelComposerClose();
+    composerCloseTimer = setTimeout(() => {
+        composerCloseTimer = null;
+        if (composerPinned) return;
+        setPanelOpen(document.getElementById(COMPOSER_BAR_ID), false);
+    }, 220);
+}
+
 function bindComposerBar() {
     const wrap = document.getElementById(COMPOSER_BAR_ID);
     if (!wrap || wrap.dataset.bound === '1') return;
@@ -714,31 +741,18 @@ function bindComposerBar() {
     bindComposerDocListeners();
 
     // 委托：容器持久，内部节点随便重建
-    wrap.addEventListener('mouseenter', () => {
-        cancelComposerClose();             // 又回到条上（或进了面板），取消待收起
-        const w = document.getElementById(COMPOSER_BAR_ID);
-        if (!w) return;
-
-        const alreadyOpen = w.querySelector('#ts-bar-panel')?.hidden === false;
-        // 只有「从关闭状态打开」时才重绘取最新数据。
-        // 面板已经开着就别重绘 —— 鼠标此刻可能正停在面板上，
-        // 重建 innerHTML 会把指针底下的节点抽走，反而触发 mouseleave 造成闪烁。
-        if (!alreadyOpen) w.innerHTML = composerBarHTML();
-
-        setPanelOpen(w, true);
+    wrap.addEventListener('mouseover', (e) => {
+        if (!inHoverZone(e.target)) return;      // 划过两侧空白不响应
+        cancelComposerClose();
+        // 内容已在每次 refreshComposerBar() 时重建过，这里不再重绘 ——
+        // 悬浮时重建 innerHTML 会把指针底下的节点抽走，反而触发 mouseout 造成闪烁。
+        setPanelOpen(document.getElementById(COMPOSER_BAR_ID), true);
     });
 
-    // 面板是容器的后代节点，鼠标从统计条移到面板不会触发 mouseleave；
-    // 但两者之间有约 6px 空隙，穿过空隙时会触发 —— 所以延迟收起，
-    // 只要在延迟内进入面板，上面的 mouseenter 就会取消它。
-    wrap.addEventListener('mouseleave', () => {
-        if (composerPinned) return;
-        cancelComposerClose();
-        composerCloseTimer = setTimeout(() => {
-            composerCloseTimer = null;
-            const w = document.getElementById(COMPOSER_BAR_ID);
-            if (w && !composerPinned) setPanelOpen(w, false);
-        }, 220);
+    wrap.addEventListener('mouseout', (e) => {
+        // 还在按钮/面板内部移动（例如按钮 → 里面的文字 span）不算离开
+        if (inHoverZone(e.relatedTarget)) return;
+        scheduleComposerClose();
     });
 
     wrap.addEventListener('click', (e) => {
@@ -755,19 +769,10 @@ function bindComposerBar() {
     wrap.addEventListener('focusin', (e) => {
         if (!e.target.closest?.('#ts-bar-trigger')) return;
         cancelComposerClose();
-        const w = document.getElementById(COMPOSER_BAR_ID);
-        setPanelOpen(w, true);
+        setPanelOpen(document.getElementById(COMPOSER_BAR_ID), true);
     });
 
-    wrap.addEventListener('focusout', () => {
-        if (composerPinned) return;
-        const w = document.getElementById(COMPOSER_BAR_ID);
-        cancelComposerClose();
-        composerCloseTimer = setTimeout(() => {
-            composerCloseTimer = null;
-            if (!composerPinned) setPanelOpen(document.getElementById(COMPOSER_BAR_ID), false);
-        }, 220);
-    });
+    wrap.addEventListener('focusout', () => scheduleComposerClose());
 }
 
 let composerRetry = 0;
