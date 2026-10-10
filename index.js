@@ -468,10 +468,10 @@ function installCharBadgeObserver() {
     refreshCharBadges();
 }
 
-// ─────────────────── 聊天框下方的实时统计条 ───────────────────
+// ─────────────────── 输入框下方的实时统计条 ───────────────────
 //
-// 参考 DSH 的 ContextMeter 设计：一个环形进度 + 百分比，点击展开明细。
-// 放在发送区上方（#form_sheld 内，#send_form 之前）。
+// 参考 DSH 的 ContextMeter 设计：一个环形进度 + 百分比，鼠标悬浮展开明细。
+// 放在输入框下方（#form_sheld 内，追加到 #send_form 之后）。
 //
 // 上下文占用 = 本回合实际发出的 prompt_tokens / 模型上下文窗口
 //   · 分子用「最近一次调用」的真实 prompt_tokens（不是估算）
@@ -549,7 +549,8 @@ function composerBarHTML() {
     // 用显式类名而不是 nth-of-type —— 后者依赖元素顺序，改一处就错位。
     return `
         <button type="button" class="ts-bar-trigger" id="ts-bar-trigger"
-                aria-label="${hasCtx ? `上下文已用 ${Math.round(pct)}%` : '上下文用量未知'}" aria-expanded="false" title="点击查看用量明细">
+                aria-label="${hasCtx ? `上下文已用 ${Math.round(pct)}%` : '上下文用量未知'}" aria-expanded="false"
+                title="鼠标悬浮查看用量明细（点一下可钉住）">
             <svg viewBox="0 0 14 14" width="13" height="13" aria-hidden="true">
                 <circle class="ts-ring-track" cx="7" cy="7" r="${RING_RADIUS}"></circle>
                 <circle class="ts-ring-fill" cx="7" cy="7" r="${RING_RADIUS}"
@@ -612,9 +613,15 @@ function refreshComposerBar() {
         holder.appendChild(existing);
     }
 
+    // 记住刷新前的展开状态：innerHTML 重建会把面板带回 hidden，
+    // 若此刻鼠标正悬停在条上（或用户已钉住），面板会当场消失 —— 必须还原。
+    const wasOpen = existing.querySelector('#ts-bar-panel')?.hidden === false;
+
     // 原地更新，避免整块重建导致面板被关闭
     existing.innerHTML = composerBarHTML();
     bindComposerBar();
+
+    if (wasOpen) setPanelOpen(existing, true);
 }
 
 /**
@@ -681,6 +688,18 @@ function bindComposerDocListeners() {
     document.addEventListener('keydown', (e) => {
         if (e.key !== 'Escape') return;
         const w = document.getElementById(COMPOSER_BAR_ID);
+        cancelComposerClose();
+        composerPinned = false;
+        setPanelOpen(w, false);
+    });
+
+    // 点进输入框 / 开始打字时收起面板。
+    // 面板是从统计条向上展开的，会盖住输入框中部（DSH 也是这个行为），
+    // 一旦用户要写东西，面板必须先让路，否则看不到自己打的字。
+    document.addEventListener('focusin', (e) => {
+        if (!e.target.closest?.('#send_textarea')) return;
+        const w = document.getElementById(COMPOSER_BAR_ID);
+        if (!w) return;
         cancelComposerClose();
         composerPinned = false;
         setPanelOpen(w, false);
