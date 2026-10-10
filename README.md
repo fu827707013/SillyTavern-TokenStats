@@ -83,24 +83,39 @@ prompt_tokens = prompt_cache_hit_tokens + prompt_cache_miss_tokens
 
 ### 方式一：酒馆内一键安装（推荐）
 
-1. 打开酒馆 → 顶部**积木图标（扩展程序）**
-2. 在面板里点按钮 **「安装扩展程序」**
-   > ⚠️ 注意：面板上那个现成的输入框（提示为「扩展 API URL」）是**旧版扩展 API 地址**，**不是**安装用的。
-   > 必须点「安装扩展程序」按钮，会**弹出一个对话框**，在那里粘贴。
-3. 在弹出对话框的输入框里粘贴本仓库地址：
-   ```
-   https://github.com/fu827707013/SillyTavern-TokenStats
-   ```
-4. 点按钮 **「只给我安装」**
-   - **只给我安装** → 装到 `data/<用户名>/extensions/`（个人使用，推荐）
-   - **给所有人安装** → 装到 `public/scripts/extensions/third-party/`（需管理员权限）
+**第 1 步** — 打开酒馆，点顶部**积木图标（扩展程序）**，在面板右上角找到并点击 **「安装扩展程序」**：
 
-   > 弹窗是异步出现的，点完按钮后稍等 1～2 秒。
-5. 会弹出**第三方扩展警告**（提示这不是官方扩展），点 **「Yes, install it」** 确认
-6. 刷新页面（F5）
+<img src="docs/install-1-button.png" alt="点击安装扩展程序按钮" width="820">
+
+> ⚠️ 注意：面板下方那个 `http://localhost:5100` 输入框是**已弃用的扩展 API 地址**，**不是**安装用的。
+> 必须点上图中高亮的「安装扩展程序」按钮。
+
+**第 2 步** — 会弹出对话框，在输入框里粘贴本仓库地址，然后点 **「只给我安装」**：
+
+<img src="docs/install-2-url.png" alt="粘贴仓库地址" width="520">
+
+```
+https://github.com/fu827707013/SillyTavern-TokenStats
+```
+
+- **只给我安装** → 装到 `data/<用户名>/extensions/`（个人使用，推荐）
+- **给所有人安装** → 装到 `public/scripts/extensions/third-party/`（需管理员权限）
+
+> 「分支或标签名」留空即可，默认拉 `main`。
+
+**第 3 步** — 会弹出**第三方扩展警告**（提示这不是官方扩展），点 **「Yes, install it」** 确认：
+
+<img src="docs/install-3-warning.png" alt="第三方扩展警告" width="520">
+
+**第 4 步** — 刷新页面（F5）。扩展列表里出现 **「Token 用量统计」** 就装好了：
+
+<img src="docs/install-4-done.png" alt="安装完成" width="820">
 
 > **安装耗时说明**：酒馆要从 GitHub 克隆仓库，网络慢时前端可能显示请求超时，但**服务端通常已经装好了**。
 > 先刷新页面看看，不要急着重试。若重试时提示 `Directory already exists`，说明上次已成功。
+
+> 以上截图是**实际走完整个流程**逐帧截取的（2026-10-10，SillyTavern 1.19.0），
+> 不是示意图 —— 按钮位置和文案与你看到的完全一致。
 
 ### 方式二：手动复制
 
